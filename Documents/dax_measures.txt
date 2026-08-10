@@ -1,0 +1,329 @@
+=====================================================================
+SENTIMENT DASHBOARD — DAX MEASURE LIBRARY
+Paste each block into Power BI: Modeling > New Measure
+Assumes fact table is named "fact_social_posts" and is related to
+dim_date (on post_date -> date), dim_platform, dim_brand, dim_topic,
+dim_geography.
+=====================================================================
+
+---------------------------------------------------------------
+1. CORE VOLUME & SENTIMENT MEASURES
+---------------------------------------------------------------
+
+Total Posts =
+COUNTROWS ( fact_social_posts )
+
+Avg Sentiment Score =
+AVERAGE ( fact_social_posts[sentiment_score] )
+
+Positive Posts =
+CALCULATE ( [Total Posts], fact_social_posts[sentiment_score] > 0.15 )
+
+Negative Posts =
+CALCULATE ( [Total Posts], fact_social_posts[sentiment_score] < -0.15 )
+
+Neutral Posts =
+[Total Posts] - [Positive Posts] - [Negative Posts]
+
+% Positive =
+DIVIDE ( [Positive Posts], [Total Posts] )
+
+% Negative =
+DIVIDE ( [Negative Posts], [Total Posts] )
+
+% Neutral =
+DIVIDE ( [Neutral Posts], [Total Posts] )
+
+Sentiment Category =   -- calculated column on fact_social_posts
+SWITCH (
+    TRUE (),
+    fact_social_posts[sentiment_score] > 0.15, "Positive",
+    fact_social_posts[sentiment_score] < -0.15, "Negative",
+    "Neutral"
+)
+
+---------------------------------------------------------------
+2. CRISIS DETECTION / ROLLING WINDOW MEASURES
+---------------------------------------------------------------
+
+Rolling 7D Avg Sentiment =
+CALCULATE (
+    [Avg Sentiment Score],
+    DATESINPERIOD ( dim_date[date], MAX ( dim_date[date] ), -7, DAY )
+)
+
+Rolling 7D % Negative =
+CALCULATE (
+    [% Negative],
+    DATESINPERIOD ( dim_date[date], MAX ( dim_date[date] ), -7, DAY )
+)
+
+Negative Spike Flag =
+VAR CurrentNeg = [% Negative]
+VAR Rolling7D = [Rolling 7D % Negative]
+RETURN
+    IF ( CurrentNeg > Rolling7D * 1.3, "Spike", "Normal" )
+
+Negative Spike Ratio =
+DIVIDE ( [% Negative], [Rolling 7D % Negative] )
+
+---------------------------------------------------------------
+3. PLATFORM / VERIFIED-ACCOUNT MEASURES
+---------------------------------------------------------------
+
+Sentiment by Verified Status =   -- use as value in a matrix
+[Avg Sentiment Score]            -- rows = is_verified_account
+
+Verified Negative Share =
+VAR VerifiedNeg =
+    CALCULATE ( [Negative Posts], fact_social_posts[is_verified_account] = TRUE )
+RETURN
+    DIVIDE ( VerifiedNeg, [Negative Posts] )
+
+---------------------------------------------------------------
+4. TOPIC / ROOT-CAUSE MEASURES
+---------------------------------------------------------------
+
+Topic Volume MoM % Change =
+VAR CurrM = [Total Posts]
+VAR PrevM = CALCULATE ( [Total Posts], DATEADD ( dim_date[date], -1, MONTH ) )
+RETURN
+    DIVIDE ( CurrM - PrevM, PrevM )
+
+Polarization Index =
+[% Positive] + [% Negative]    -- higher = more polarizing (less neutral)
+
+Topic Sentiment Rank =
+RANKX ( ALL ( fact_social_posts[topic] ), [% Negative], , DESC )
+
+---------------------------------------------------------------
+5. GEOGRAPHY MEASURES
+---------------------------------------------------------------
+
+Tier Sentiment Gap =
+VAR MetroSent =
+    CALCULATE ( [Avg Sentiment Score], fact_social_posts[tier] = "Metro" )
+VAR Tier3Sent =
+    CALCULATE ( [Avg Sentiment Score], fact_social_posts[tier] = "Tier3" )
+RETURN
+    MetroSent - Tier3Sent
+
+---------------------------------------------------------------
+6. ENGAGEMENT / INFLUENCE MEASURES
+---------------------------------------------------------------
+
+Total Engagement =
+SUM ( fact_social_posts[likes] )
+    + SUM ( fact_social_posts[shares] )
+    + SUM ( fact_social_posts[comments] )
+
+Engagement Rate =
+DIVIDE ( [Total Engagement], SUM ( fact_social_posts[followers_count] ) )
+
+Reach of Negative Posts =
+CALCULATE ( [Total Engagement], fact_social_posts[sentiment_score] < -0.15 )
+
+Priority Score =            -- volume-weighted negativity, for ranking issues
+[Negative Posts] * DIVIDE ( [Total Engagement], [Total Posts] )
+
+Switching Mentions =
+CALCULATE (
+    [Total Posts],
+    FILTER ( fact_social_posts, CONTAINSSTRING ( fact_social_posts[post_text], "switching" ) )
+)
+
+---------------------------------------------------------------
+7. FESTIVAL / CAMPAIGN IMPACT MEASURES
+---------------------------------------------------------------
+
+Sentiment During Festival =
+CALCULATE ( [Avg Sentiment Score], dim_date[is_festival_window] = TRUE )
+
+Sentiment Non-Festival =
+CALCULATE ( [Avg Sentiment Score], dim_date[is_festival_window] = FALSE )
+
+Festival Sentiment Lift =
+[Sentiment During Festival] - [Sentiment Non-Festival]
+
+---------------------------------------------------------------
+8. TREND / PERIOD-OVER-PERIOD MEASURES
+---------------------------------------------------------------
+
+Sentiment QoQ Change =
+VAR CurrQ = [Avg Sentiment Score]
+VAR PrevQ = CALCULATE ( [Avg Sentiment Score], DATEADD ( dim_date[date], -1, QUARTER ) )
+RETURN
+    CurrQ - PrevQ
+
+Sentiment YoY Change =
+VAR CurrY = [Avg Sentiment Score]
+VAR PrevY = CALCULATE ( [Avg Sentiment Score], DATEADD ( dim_date[date], -1, YEAR ) )
+RETURN
+    CurrY - PrevY
+
+---------------------------------------------------------------
+9. ROW-LEVEL SECURITY (RLS) — ROLE FILTER DAX
+---------------------------------------------------------------
+Set these up in Power BI Desktop: Modeling > Manage Roles > Create Role,
+then apply the filter DAX below to the table named in [brackets] for that role.
+Relationships needed:
+  - dim_security_brand[brand]  (unique, 1 row/brand)  -> fact_social_posts[brand]  (default 1-to-many direction, no change needed)
+  - dim_security_region[state] (unique, 1 row/state)   -> fact_social_posts[state]  (default 1-to-many direction, no change needed)
+  - dim_brand[sector] is already related to fact_social_posts via dim_brand[brand]
+
+--- Role: Executive ---
+No filter on any table. Sees all brands, all regions, all platforms.
+
+--- Role: Telecom Sector (static) ---   [apply filter on table: dim_brand]
+dim_brand[sector] = "Telecom"
+
+--- Role: Fintech Sector (static) ---   [apply filter on table: dim_brand]
+dim_brand[sector] = "Fintech"
+-- (duplicate this pattern for E-commerce / Food Delivery / Banking / Travel / Aviation / Ride-hailing)
+
+--- Role: Brand Manager (dynamic) ---   [apply filter on table: dim_security_brand]
+[user_email] = USERPRINCIPALNAME()
+
+--- Role: Regional Manager (dynamic) ---   [apply filter on table: dim_security_region]
+[user_email] = USERPRINCIPALNAME()
+
+--- Role: South Zone (static, coarse alternative to per-state) ---   [apply filter on table: dim_security_region]
+[zone] = "South"
+
+Testing:
+  Desktop  -> Modeling > View As > pick a role (or "Other user" + type an email for dynamic roles)
+  Service  -> Dataset Settings > Security > add the role > add members (their AAD/Entra login
+              must exactly match the user_email value used above, e.g. manager.jio@sentimentiq.com)
+
+---------------------------------------------------------------
+10. VIEWER CLARITY & UX MEASURES
+---------------------------------------------------------------
+These don't add new analysis — they make the SAME numbers readable by anyone: a technical
+analyst, an executive skimming on a phone, or a regional manager who has never opened Power
+BI before. Use them for card visuals, dynamic titles, tooltips, and conditional formatting.
+
+--- A. Human-readable numbers (avoid raw big integers on cards) ---
+
+Total Posts (Formatted) =
+VAR v = [Total Posts]
+RETURN
+    SWITCH (
+        TRUE (),
+        v >= 1000000, FORMAT ( v / 1000000, "0.0" ) & "M",
+        v >= 1000, FORMAT ( v / 1000, "0.0" ) & "K",
+        FORMAT ( v, "0" )
+    )
+
+Total Engagement (Formatted) =
+VAR v = [Total Engagement]
+RETURN
+    SWITCH (
+        TRUE (),
+        v >= 1000000, FORMAT ( v / 1000000, "0.0" ) & "M",
+        v >= 1000, FORMAT ( v / 1000, "0.0" ) & "K",
+        FORMAT ( v, "0" )
+    )
+
+Avg Sentiment Score (Formatted) =
+FORMAT ( [Avg Sentiment Score], "0.00" ) & IF ( [Avg Sentiment Score] >= 0, "  (positive)", "  (negative)" )
+
+--- B. Dynamic titles that state exactly what's on screen ---
+
+Dashboard Title Context =
+VAR SelBrand = IF ( HASONEVALUE ( dim_brand[brand] ), SELECTEDVALUE ( dim_brand[brand] ), "All Brands" )
+VAR SelPlatform = IF ( HASONEVALUE ( fact_social_posts[platform] ), SELECTEDVALUE ( fact_social_posts[platform] ), "All Platforms" )
+VAR StartD = FORMAT ( MIN ( dim_date[date] ), "DD MMM YYYY" )
+VAR EndD = FORMAT ( MAX ( dim_date[date] ), "DD MMM YYYY" )
+RETURN
+    "Sentiment Trend — " & SelBrand & " | " & SelPlatform & " | " & StartD & " – " & EndD
+
+Active Filters Summary =
+"Showing: " &
+    IF ( HASONEVALUE ( dim_brand[brand] ), SELECTEDVALUE ( dim_brand[brand] ), "All brands" ) &
+    "  ·  " &
+    IF ( HASONEVALUE ( fact_social_posts[platform] ), SELECTEDVALUE ( fact_social_posts[platform] ), "All platforms" ) &
+    "  ·  " &
+    IF ( HASONEVALUE ( fact_social_posts[state] ), SELECTEDVALUE ( fact_social_posts[state] ), "All India" )
+
+--- C. Status indicators for conditional formatting / icon sets ---
+
+Sentiment Health Status =
+VAR pctNeg = [% Negative]
+RETURN
+    SWITCH (
+        TRUE (),
+        pctNeg > 0.35, "Needs Attention",
+        pctNeg > 0.20, "Monitor",
+        "Healthy"
+    )
+
+Sentiment Health Color =    -- bind to Format > Conditional formatting > Field value (background/font color)
+VAR pctNeg = [% Negative]
+RETURN
+    SWITCH (
+        TRUE (),
+        pctNeg > 0.35, "#C0392B",
+        pctNeg > 0.20, "#E1B12C",
+        "#27AE60"
+    )
+
+Sentiment Icon Value =      -- bind to Conditional formatting > Icons > Field value (1/2/3 rules)
+SWITCH ( TRUE (), [% Negative] > 0.35, 1, [% Negative] > 0.20, 2, 3 )
+
+Sentiment Trend Arrow =
+VAR delta = [Sentiment QoQ Change]
+RETURN
+    SWITCH (
+        TRUE (),
+        delta > 0.02, "▲ Improving",
+        delta < -0.02, "▼ Declining",
+        "▬ Stable"
+    )
+
+--- D. Guardrails so viewers never see a blank or a misleading tiny-sample number ---
+
+Data Confidence Label =
+VAR n = [Total Posts]
+RETURN
+    IF (
+        n < 30,
+        "⚠ Small sample (n=" & n & ") — interpret with caution",
+        "Based on " & [Total Posts (Formatted)] & " posts"
+    )
+
+Safe Avg Sentiment Score =     -- use this instead of [Avg Sentiment Score] on any visual that can be filtered to zero rows
+IF ( ISBLANK ( [Total Posts] ) || [Total Posts] = 0, BLANK (), [Avg Sentiment Score] )
+
+No Data Message =
+IF (
+    [Total Posts] = 0,
+    "No posts match the current filters — try widening the date range or removing a filter.",
+    BLANK ()
+)
+
+--- E. Plain-language narrative for the non-technical stakeholder page ---
+
+Top Negative Topic Name =
+VAR TopicTable =
+    ADDCOLUMNS ( VALUES ( fact_social_posts[topic] ), "NegCount", CALCULATE ( [Negative Posts] ) )
+VAR TopTopic = TOPN ( 1, TopicTable, [NegCount], DESC )
+RETURN
+    MAXX ( TopTopic, fact_social_posts[topic] )
+
+Executive Narrative =
+"Overall sentiment is " & [Sentiment Trend Arrow] & ". " &
+FORMAT ( [% Positive], "0%" ) & " of posts are positive and " &
+FORMAT ( [% Negative], "0%" ) & " are negative. " &
+"The most discussed negative topic right now is " & [Top Negative Topic Name] & ". " &
+[Data Confidence Label] & "."
+
+--- F. Data freshness metadata (so viewers know how current the numbers are) ---
+
+Latest Post Date =
+MAX ( fact_social_posts[post_date] )
+
+Data As Of =
+"Data as of " & FORMAT ( [Latest Post Date], "DD MMM YYYY" )
+
+Sentiment Score Explainer =    -- static text measure, pin as a tooltip or info icon
+"Score ranges from -1 (very negative) to +1 (very positive). Above +0.15 = Positive, below -0.15 = Negative, in between = Neutral."
