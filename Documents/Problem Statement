@@ -1,0 +1,30 @@
+# Problem Statement
+
+Organizations receive a large volume of customer opinions, feedback, and reactions through social media platforms. Raw social media data is difficult to interpret because it contains different sentiment types, varying engagement levels, platforms, topics, and changing trends over time.
+
+The objective of this project is to analyze social media data and convert it into meaningful, actionable business insights using Microsoft Power BI.
+
+The dashboard analyzes:
+- Positive, Negative, and Neutral sentiment
+- Sentiment trends over time
+- Social media platform performance
+- Engagement levels
+- Topic/category performance
+- Areas with higher negative feedback
+
+The solution enables businesses to monitor public perception, identify potential issues, understand audience engagement, compare platform performance, and support data-driven marketing and customer experience decisions.
+
+## Key Business Questions
+
+1. What is the overall sentiment of social media posts?
+2. What percentage of posts are Positive, Negative, and Neutral?
+3. How does sentiment change over time?
+4. Which platforms generate the highest engagement?
+5. Which platforms have the highest positive or negative sentiment?
+6. Which topics/categories receive the most negative feedback?
+7. How does engagement vary by sentiment?
+8. Are there significant changes or spikes in negative sentiment?
+
+## Proposed Solution
+
+Raw Data → Data Cleaning → Data Transformation → Data Modeling → DAX Measures → Interactive Power BI Dashboard → Business Insights
